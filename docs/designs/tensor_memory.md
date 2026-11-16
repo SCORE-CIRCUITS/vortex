@@ -183,13 +183,55 @@ rejects it at decode. WMMA is unchanged.
 
 ## 8. Results
 
-NT=8, 4 TCU blocks, FEDP2K, fp16 → fp32. Area: Beacon on the `tcuw` DUT
-(`VX_tcu_unit` + `VX_tcu_shared` at full issue width, TFR FEDP); cycles:
-rtlsim (SimX in parentheses).
+NT=8, 4 TCU blocks (TMEM 32 lanes by 512 columns, 64 KB), FEDP2K, fp16 →
+fp32. Area: Beacon on the `tcuw` DUT (`VX_tcu_unit` + `VX_tcu_shared` at
+full issue width, TFR FEDP; `make tcuw-beacon` in `hw/syn/xilinx/dut`).
+Cycles: rtlsim, SimX in parentheses, with the configs of
+`ci/testcases/tensor_wg.yaml` (16 warps).
 
-See the redo's measurement table in the change description; the
-methodology is `hw/syn/xilinx/dut` `tcuw-beacon` and `ci/blackbox.sh` with
-the configs of `ci/testcases/tensor_wg.yaml`.
+**Area against the same build without TMEM:**
+
+| | WGMMA only | TMEM | Difference |
+|---|---|---|---|
+| LUT | 100,302 | 110,914 | +10,612 (+10.6%) |
+| FF | 60,960 | 63,351 | +2,391 |
+| Block RAM | 0 | 32 | the TMEM storage |
+
+| Where the LUTs go | LUT |
+|---|---|
+| `VX_tcu_tmem` | 7,569 |
+| A buffers: the A-from-TMEM fill (4 blocks) | 1,936 |
+| B buffer: dense K-major prefetch and row merging | 565 |
+| Tile-buffer LMEM port: the `tc.cp` master | 108 |
+| Blocks: engine steps beside warp ops | 988 |
+| Warp WGMMA logic left out (§7) | −553 |
+
+**Inside `VX_tcu_tmem`**, each part measured by removing it alone:
+
+| Part | LUT |
+|---|---|
+| `tmem.st`: per-block data, lane-per-thread scatter, write port | 2,358 |
+| `tmem.ld` and the transfer unit's shared logic | 911 |
+| `tc.cp` | 1,674 |
+| Commit tracking | 411 |
+| Allocator | 341 |
+| Row-hazard check | 176 |
+| Op queue | ~100 |
+| Engine walk, step register, write-back queues, port control | ~1,600 |
+
+**Builds without TMEM** match the base: every non-TMEM perf gate keeps its
+cycle count and flip-flops are identical. Beacon LUTs are equal for WMMA
+builds and within 2 for WGMMA builds (34 on the `tensor` DUT), where the B
+buffer's TMEM-gated code maps slightly differently.
+
+**Cycles:**
+
+| Kernel | Cycles |
+|---|---|
+| GEMM 128×128×128 | 46,744 (48,153) |
+| GEMM 128×128×512 | 183,812 (185,772) |
+| Sparse GEMM 64×64×64, metadata by `tc.cp` | 8,191 (8,631) |
+| FlashAttention-4, 4 tiles (`-l64 -n32 -d64 -b4`) | 59,434 (59,314) |
 
 ## 9. Not covered
 
