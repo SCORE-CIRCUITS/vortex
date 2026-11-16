@@ -64,7 +64,7 @@ module VX_tcu_abuf import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     input  wire                     req_valid,
     input  wire                     req_setup,
     input  wire [3:0]               req_step_m,
-    input  wire [3:0]               req_step_n,
+    input  wire [TCU_TBUF_N_W-1:0]  req_step_n,
     input  wire [3:0]               req_step_k,
     input  wire [`VX_CFG_XLEN-1:0]  req_desc_a,
     input  wire                     req_a_is_smem,

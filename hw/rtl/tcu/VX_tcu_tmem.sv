@@ -119,8 +119,6 @@ module VX_tcu_tmem import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     localparam WQ_DEPTH = 16;                   // steps in flight
     localparam SCNTW    = 16;                   // step counters
     localparam A_READS  = TCU_WG_FEDP_K / TC_N;
-    localparam KT_BYTES = TCU_WG_FEDP_K * 4;
-    localparam B_BLK_BYTES = TC_N * KT_BYTES;   // a block-major B (k, n) block
     localparam CP_ROW_WORDS = `VX_CFG_LMEM_NUM_BANKS * (`VX_CFG_XLEN / 32);
     localparam CP_FRAGS = CP_ROW_WORDS / NT;    // fragment rows per LMEM bank row
     localparam CP_ADDRW = `VX_CFG_LMEM_LOG_SIZE - `CLOG2(CP_ROW_WORDS * 4);
@@ -636,14 +634,12 @@ module VX_tcu_tmem import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     logic             run_go_r;       // the descriptors are set; prologue and steps follow
     logic             run_m_r;
     logic [7:0]       run_n_r;
-    logic [3:0]       run_sn_r;
-    logic [15:0]      run_choff_r;
     logic [3:0]       pro_idx_r;
 
     // step register E
     logic             e_valid_r;
     logic             e_m_r;
-    logic [3:0]       e_sn_r;
+    logic [7:0]       e_sn_r;
     logic             e_first_r;
     logic             e_pf_ok_r;
     logic             e_zero_r;
@@ -924,7 +920,7 @@ module VX_tcu_tmem import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
             jd.op_args.tcu.fmt_s        = e_fmt_s_r;
             jd.op_args.tcu.fmt_d        = (e_fmt_s_r >= 5'(TCU_I32_ID)) ? 5'(TCU_I32_ID) : 5'(TCU_FP32_ID);
             jd.op_args.tcu.step_m       = 4'(e_m_r);
-            jd.op_args.tcu.step_n       = e_sn_r;
+            jd.op_args.tcu.step_n       = 4'(e_sn_r);   // the core takes its low bits
             jd.op_args.tcu.is_first_uop = e_first_r;
             for (int t = 0; t < NT; ++t) begin
                 jd.rs3_data[t] = `VX_CFG_XLEN'(e_c[b][t]);
@@ -936,7 +932,7 @@ module VX_tcu_tmem import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
             tr.wid          = e_wid_r;
             tr.cta_id       = e_cta_r;
             tr.step_m       = 4'(e_m_r);
-            tr.step_n       = e_sn_r;
+            tr.step_n       = TCU_TBUF_N_W'(e_sn_r);
             tr.cd_nregs     = 2'd2;
             tr.desc_a       = `VX_CFG_XLEN'(smem_desc(e_a_off_r[b], e_lda_r));
             tr.desc_b       = `VX_CFG_XLEN'(smem_desc(e_b_off_r, e_ldb_r));
@@ -1165,7 +1161,7 @@ module VX_tcu_tmem import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
             if (load) begin
                 e_valid_r      <= 1'b1;
                 e_m_r          <= run_m_r;
-                e_sn_r         <= run_sn_r;
+                e_sn_r         <= run_n_r;
                 e_g_r          <= load_g;
                 e_uuid_r       <= rj.uuid;
                 e_wid_r        <= rj.wid;
@@ -1178,17 +1174,15 @@ module VX_tcu_tmem import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
                 for (int b = 0; b < BLOCK_SIZE; ++b) begin
                     e_a_off_r[b] <= r_a_off + 18'(32'(b) * XM * 32'(r_lda));
                 end
-                e_b_off_r      <= r_b_off + 18'(run_choff_r);
+                e_b_off_r      <= r_b_off;
                 e_first_r      <= (run_m_r == 1'b0) && (run_n_r == 8'd0);
-                e_pf_ok_r      <= (run_n_r != r_n_last) && (run_sn_r != 4'd15);
+                e_pf_ok_r      <= (run_n_r != r_n_last);
                 e_zero_r       <= r_acc_init;
             end else if (job_fire) begin
                 e_valid_r <= 1'b0;
             end
 
-            // walk m (inner), then n. Step n of the bbuf/abuf/FEDP is 4 bits and
-            // 0 marks the op's first step, so later steps cycle through 1..15
-            // with the remainder folded into the B descriptor.
+            // walk m (inner), then n
             if (load) begin
                 if (~load_m_last) begin
                     run_m_r <= 1'b1;
@@ -1196,12 +1190,6 @@ module VX_tcu_tmem import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
                     run_m_r <= 1'b0;
                     if (~load_last) begin
                         run_n_r <= run_n_r + 8'd1;
-                        if (run_sn_r == 4'd15) begin
-                            run_sn_r    <= 4'd1;
-                            run_choff_r <= run_choff_r + ((r_ldb != 0) ? (16'd15 * 16'(TC_N) * r_ldb) : 16'(15 * B_BLK_BYTES));
-                        end else begin
-                            run_sn_r <= run_sn_r + 4'd1;
-                        end
                     end
                 end
             end
@@ -1231,8 +1219,6 @@ module VX_tcu_tmem import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
                 run_op_r    <= head;
                 run_m_r     <= 1'b0;
                 run_n_r     <= 8'd0;
-                run_sn_r    <= 4'd0;
-                run_choff_r <= 16'd0;
                 pro_idx_r   <= 4'd0;
                 cp_req_r    <= '0;
                 cp_rsp_r    <= '0;

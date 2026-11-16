@@ -1657,10 +1657,9 @@ public:
   }
 
   // Whether the step engine prefetches block n + 1: dense K-major B, within
-  // the op and the RTL's 16-block descriptor chunk (step_n 15 wraps).
+  // the op.
   static bool job_b_prefetch(const tj_t& job) {
-    return !job.sparse && job.ldb != 0 && job.n + 1 < job.n_frag
-        && !(job.n != 0 && job.n % 15 == 0);
+    return !job.sparse && job.ldb != 0 && job.n + 1 < job.n_frag;
   }
 
   // A dense K-major block's row reads stay in flight together.

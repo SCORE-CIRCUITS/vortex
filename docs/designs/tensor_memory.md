@@ -193,16 +193,16 @@ Cycles: rtlsim, SimX in parentheses, with the configs of
 
 | | WGMMA only | TMEM | Difference |
 |---|---|---|---|
-| LUT | 100,302 | 110,914 | +10,612 (+10.6%) |
-| FF | 60,960 | 63,351 | +2,391 |
+| LUT | 100,302 | 110,959 | +10,657 (+10.6%) |
+| FF | 60,960 | 63,355 | +2,395 |
 | Block RAM | 0 | 32 | the TMEM storage |
 
 | Where the LUTs go | LUT |
 |---|---|
-| `VX_tcu_tmem` | 7,569 |
-| A buffers: the A-from-TMEM fill (4 blocks) | 1,936 |
-| B buffer: dense K-major prefetch and row merging | 565 |
-| Tile-buffer LMEM port: the `tc.cp` master | 108 |
+| `VX_tcu_tmem` | 7,516 |
+| A buffers: the A-from-TMEM fill (4 blocks) | 1,960 |
+| B buffer: dense K-major prefetch, row merging, wide N step | 628 |
+| Tile-buffer LMEM port: the `tc.cp` master | 119 |
 | Blocks: engine steps beside warp ops | 988 |
 | Warp WGMMA logic left out (§7) | −553 |
 
@@ -217,7 +217,7 @@ Cycles: rtlsim, SimX in parentheses, with the configs of
 | Allocator | 341 |
 | Row-hazard check | 176 |
 | Op queue | ~100 |
-| Engine walk, step register, write-back queues, port control | ~1,600 |
+| Engine walk, step register, write-back queues, port control | ~1,550 |
 
 **Builds without TMEM** match the base: every non-TMEM perf gate keeps its
 cycle count and flip-flops are identical. Beacon LUTs are equal for WMMA
@@ -228,10 +228,10 @@ buffer's TMEM-gated code maps slightly differently.
 
 | Kernel | Cycles |
 |---|---|
-| GEMM 128×128×128 | 46,744 (48,153) |
-| GEMM 128×128×512 | 183,812 (185,772) |
+| GEMM 128×128×128 | 46,724 (48,132) |
+| GEMM 128×128×512 | 183,529 (185,767) |
 | Sparse GEMM 64×64×64, metadata by `tc.cp` | 8,191 (8,631) |
-| FlashAttention-4, 4 tiles (`-l64 -n32 -d64 -b4`) | 59,434 (59,314) |
+| FlashAttention-4, 4 tiles (`-l64 -n32 -d64 -b4`) | 59,649 (59,205) |
 
 ## 9. Not covered
 

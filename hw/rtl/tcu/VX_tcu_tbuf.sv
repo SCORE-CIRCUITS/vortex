@@ -162,7 +162,7 @@ module VX_tcu_tbuf import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     wire                          bbuf_req_is_sparse;
     wire [3:0]                    bbuf_req_step_m;
     wire [3:0]                    bbuf_req_step_k;
-    wire [3:0]                    bbuf_req_step_n;
+    wire [TCU_TBUF_N_W-1:0]       bbuf_req_step_n;
     wire [1:0]                    bbuf_req_cd_nregs;
     wire [NCTA_WIDTH-1:0]         bbuf_req_cta_id;
     wire [`VX_CFG_XLEN-1:0]       bbuf_req_desc_b;
@@ -211,7 +211,7 @@ module VX_tcu_tbuf import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
         logic              sel_is_sparse;
         logic [3:0]        sel_step_m;
         logic [3:0]        sel_step_k;
-        logic [3:0]        sel_step_n;
+        logic [TCU_TBUF_N_W-1:0] sel_step_n;
         logic [1:0]        sel_cd_nregs;
         logic [NCTA_WIDTH-1:0] sel_cta_id;
         logic [`VX_CFG_XLEN-1:0]  sel_desc_b;

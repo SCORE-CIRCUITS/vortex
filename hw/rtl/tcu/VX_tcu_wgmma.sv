@@ -163,7 +163,7 @@ module VX_tcu_wgmma import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
         assign req[bi].cta_id       = exec_data[bi].header.cta_id;
         assign req[bi].step_m       = exec_data[bi].op_args.tcu.step_m;
         assign req[bi].step_k       = exec_data[bi].op_args.tcu.step_k;
-        assign req[bi].step_n       = exec_data[bi].op_args.tcu.step_n;
+        assign req[bi].step_n       = TCU_TBUF_N_W'(exec_data[bi].op_args.tcu.step_n);
         assign req[bi].cd_nregs     = exec_data[bi].op_args.tcu.cd_nregs;
         wire use_live_desc = is_first_uop_b_w[bi]
                           && !needs_setup_b_w[bi];

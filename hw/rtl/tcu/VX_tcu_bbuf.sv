@@ -59,7 +59,7 @@ module VX_tcu_bbuf import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     input  wire                     req_is_sparse,
     input  wire [3:0]               req_step_m,
     input  wire [3:0]               req_step_k,
-    input  wire [3:0]               req_step_n,
+    input  wire [TCU_TBUF_N_W-1:0]  req_step_n,
     input  wire [1:0]               req_cd_nregs,
     input  wire [NCTA_WIDTH-1:0]    req_cta_id,
     input  wire [`VX_CFG_XLEN-1:0]  req_desc_b,
@@ -116,8 +116,8 @@ module VX_tcu_bbuf import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     localparam LG_B_BLOCK_WORDS   = $clog2(B_BLOCK_WORDS);
     localparam KM_CTR_W           = $clog2(TCU_TC_N + 1);
     // 32-bit-word offset width for K-major address arithmetic.
-    //   step_n × TCU_TC_N + j has ≤ 4+4 bits; × ldm_words adds LDM_W.
-    localparam KM_OFF_W           = LDM_W + 4 + 4;
+    //   step_n × TCU_TC_N + j has ≤ N_W+4 bits; × ldm_words adds LDM_W.
+    localparam KM_OFF_W           = LDM_W + TCU_TBUF_N_W + 4;
     // Tensor ops reuse slots across descriptors and prefetch the next N block.
     localparam bit TMEM_EN        = (`VX_CFG_TCU_TMEM_ENABLED != 0);
 
@@ -126,14 +126,23 @@ module VX_tcu_bbuf import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     // K_STEPS=2 always; N_STEPS=4/8/16 for cd_nregs=0/1/2 (NRC=8/16/32).
     // -----------------------------------------------------------------------
 
-    logic [4:0] block_index;
+    // A tensor op is one K step (step_k = 0) over up to 2^N_W N blocks, so
+    // its block index is step_n itself.
+    localparam BI_W = 1 + TCU_TBUF_N_W;
+    logic [BI_W-1:0] block_index;
     always_comb begin
-        case (req_cd_nregs)
-            2'd0:    block_index = {2'b0, req_step_k[0], req_step_n[1:0]};   // N_STEPS=4
-            2'd1:    block_index = {1'b0, req_step_k[0], req_step_n[2:0]};   // N_STEPS=8
-            default: block_index = {req_step_k[0], req_step_n[3:0]};         // N_STEPS=16
-        endcase
+        if (TMEM_EN) begin
+            block_index = BI_W'(req_step_n);
+        end else begin
+            case (req_cd_nregs)
+                2'd0:    block_index = BI_W'({req_step_k[0], req_step_n[1:0]});   // N_STEPS=4
+                2'd1:    block_index = BI_W'({req_step_k[0], req_step_n[2:0]});   // N_STEPS=8
+                default: block_index = BI_W'({req_step_k[0], req_step_n[3:0]});   // N_STEPS=16
+            endcase
+        end
     end
+    `RUNTIME_ASSERT (~(TMEM_EN && req_valid && (req_step_k != 4'd0)),
+        ("%s tensor-op tile-buffer request with step_k %0d", INSTANCE_ID, req_step_k))
     if (4 > 1) begin : g_step_k_upper_unused
         `UNUSED_VAR (req_step_k[3:1])
     end
@@ -147,9 +156,7 @@ module VX_tcu_bbuf import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     // Sparse blocks use the flat producer layout and can span one or two
     // logical 32-bit bank rows.
     localparam TOTAL_SHIFT = LG_B_SUB_BLOCKS + LG_XLEN_RATIO;
-    wire [4:0] dense_offset = (TOTAL_SHIFT == 0)
-                            ? block_index
-                            : 5'(block_index >> TOTAL_SHIFT);
+    wire [BANK_ADDR_WIDTH-1:0] dense_offset = BANK_ADDR_WIDTH'(block_index >> TOTAL_SHIFT);
 
     // Dense within-physical-bank-row selector (XLEN>32 only). Picks which
     // of the XLEN_RATIO logical 32-bit bank-rows to copy into slot A.
@@ -157,9 +164,9 @@ module VX_tcu_bbuf import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     wire [SUB_HALF_W-1:0] dense_sub_half =
         (LG_XLEN_RATIO == 0)
         ? '0
-        : SUB_HALF_W'(({27'b0, block_index} >> LG_B_SUB_BLOCKS) & ((1 << LG_XLEN_RATIO) - 1));
+        : SUB_HALF_W'((32'(block_index) >> LG_B_SUB_BLOCKS) & ((1 << LG_XLEN_RATIO) - 1));
 
-    localparam SP_LOGROW_W = 6;
+    localparam SP_LOGROW_W = BI_W + 1;
     wire [SP_LOGROW_W-1:0] sp_logrow_a =
         SP_LOGROW_W'(block_index) * SP_LOGROW_W'(LOGICAL_ROWS_PER_BLK);
     wire [SP_LOGROW_W-1:0] sp_logrow_b = sp_logrow_a + SP_LOGROW_W'(1);
@@ -214,7 +221,7 @@ module VX_tcu_bbuf import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     logic                       slot_row_major_r;
     logic [LDM_W-1:0]           slot_ldm_words_r;
     logic [3:0]                 slot_step_k_r;
-    logic [3:0]                 slot_step_n_r;
+    logic [TCU_TBUF_N_W-1:0]    slot_step_n_r;
     logic [NCTA_WIDTH-1:0]      slot_cta_id_r;
     // K-major descriptors can point to storage rewritten between WGMMA instructions.
     logic                       refetched_for_first_uop_r;
@@ -231,7 +238,7 @@ module VX_tcu_bbuf import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
 
     // Per-mode fetch addresses.
     wire [BANK_ADDR_WIDTH-1:0] fetch_addr_dense =
-        desc_b_row_base + BANK_ADDR_WIDTH'(dense_offset);
+        desc_b_row_base + dense_offset;
     wire [BANK_ADDR_WIDTH-1:0] fetch_addr_a_sparse =
         desc_b_row_base + BANK_ADDR_WIDTH'(sp_logrow_a >> LG_XLEN_RATIO);
     wire [BANK_ADDR_WIDTH-1:0] fetch_addr_b_sparse =
@@ -279,7 +286,8 @@ module VX_tcu_bbuf import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     // slot B (unused by dense B) while slot A fetches the next N block.
     wire req_dense_km = req_wants_kmajor && !req_is_sparse;
     logic                       w1_valid_r;
-    logic [3:0]                 w1_step_k_r, w1_step_n_r;
+    logic [3:0]                 w1_step_k_r;
+    logic [TCU_TBUF_N_W-1:0]    w1_step_n_r;
     logic [NCTA_WIDTH-1:0]      w1_cta_id_r;
     logic [BANK_ADDR_WIDTH-1:0] w1_row_base_r;
     logic [BANK_ROW_WORDS_LOG2-1:0] w1_inrow_r;
@@ -299,8 +307,8 @@ module VX_tcu_bbuf import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     wire need_fetch        = req_valid && !bank_row_resident;
     wire alloc_en          = need_fetch && !slot_fetching_r;
     wire pf_en = TMEM_EN && req_valid && req_dense_km && req_pf_ok && bank_row_resident_kmajor
-              && !slot_fetching_r && !req_setup && (req_step_n != 4'd15);
-    wire [3:0] fetch_step_n = pf_en ? (req_step_n + 4'd1) : req_step_n;
+              && !slot_fetching_r && !req_setup && (req_step_n != '1);
+    wire [TCU_TBUF_N_W-1:0] fetch_step_n = pf_en ? (req_step_n + TCU_TBUF_N_W'(1)) : req_step_n;
     wire rd_w1 = bank_row_resident_w1 && !bank_row_resident_kmajor;
 
     assign bbuf_ready = !req_valid || bank_row_resident;

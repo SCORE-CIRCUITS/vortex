@@ -468,6 +468,10 @@ package VX_tcu_pkg;
 
     `DECL_EXECUTE_T (tcu, `VX_CFG_NUM_TCU_LANES);
 
+    // N step width of a tile-buffer request: a tensor op walks up to 128
+    // fragments; a WGMMA at most 16 N steps.
+    localparam TCU_TBUF_N_W = `VX_CFG_TCU_TMEM_ENABLED ? 8 : 4;
+
     // tcu_tbuf_req_t — per-block uop request packed for VX_tcu_tbuf.
     // `valid` is pre-gated to WGMMA and masked by `cta_conflict`.
     typedef struct packed {
@@ -476,7 +480,7 @@ package VX_tcu_pkg;
         logic [NW_WIDTH-1:0]        wid;
         logic [NCTA_WIDTH-1:0]      cta_id;
         logic [3:0]                 step_m;
-        logic [3:0]                 step_n;
+        logic [TCU_TBUF_N_W-1:0]    step_n;
         logic [3:0]                 step_k;
         logic [1:0]                 cd_nregs;
         logic [`VX_CFG_XLEN-1:0]    desc_a;
